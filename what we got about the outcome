@@ -1,0 +1,13 @@
+Model başarıyla yüklendi.
+1/1 ━━━━━━━━━━━━━━━━━━━━ 1s 1s/step
+
+========== TAHMİN SONUCU ==========
+Resim: test.jfif
+Tahminim: Makas (Skor: -0.31)
+===================================
+(Ham skorlar: Tas=-0.81, Kagit=-0.56, Makas=-0.31)
+
+Resmimiz taş işareti yapan bir eldi. Sonuca baktığımızda Makas yanıtını verdiğini görüyoruz. 
+Bu sonuç maalesef ki yanlış.
+Modelimizin Epoch değerini arttırmamız bize daha doğru sonuca yaklaşmamızı sağlayacaktır.
+Tekrar deneyeceğiz.
