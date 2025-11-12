@@ -1,0 +1,65 @@
+import tensorflow as tf
+import numpy as np
+import cv2  # OpenCV kütüphanesi
+import os
+
+# 1. Kaydedilmiş modeli yükle
+print("Model 'tas_kagit_makas_modeli.h5' yükleniyor...")
+model = tf.keras.models.load_model('tas_kagit_makas_modeli.h5')
+print("Model başarıyla yüklendi.")
+
+# 2. Sınıf isimlerini (eğittiğimiz sırayla) tanımla
+# (Veri seti 'rock_paper_scissors' bu sırayla gelir)
+sinif_isimleri = ['Tas', 'Kagit', 'Makas']
+
+# 3. Modele uygun resim hazırlama fonksiyonu
+IMG_SIZE = 160
+preprocess_input = tf.keras.applications.mobilenet_v2.preprocess_input
+
+def resmi_hazirla(resim_yolu):
+    # Resmi oku
+    img = cv2.imread(resim_yolu)
+    
+    # OpenCV (BGR) formatından standart (RGB) formata çevir
+    img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+    
+    # Resmi modelin istediği boyuta (160x160) getir
+    img = cv2.resize(img, (IMG_SIZE, IMG_SIZE))
+    
+    # Resmi bir "batch" (yığın) haline getir (model tek resim değil, resim yığını bekler)
+    img_array = np.expand_dims(img, axis=0)
+    
+    # Resmi MobileNetV2'nin istediği formata (-1 ile 1 arası) normalize et
+    return preprocess_input(img_array)
+
+# 4. Tahmin yapılacak resmin yolu
+# Lütfen internetten bir "taş", "kağıt" veya "makas" el resmi indirin
+# ve 'test_resmi.jpg' adıyla AI klasörünüze kaydedin.
+resim_yolu = 'test.jfif' 
+
+# 5. Resmi hazırla ve tahmini yap
+if os.path.exists(resim_yolu):
+    hazirlanmis_resim = resmi_hazirla(resim_yolu)
+
+    # Tahmini yap
+    tahmin_sonuclari = model.predict(hazirlanmis_resim)
+
+    # 6. Sonucu yorumla
+    # model.predict() bize 3 değerlik bir liste verir, örn: [-2.1, 3.5, 0.4]
+    # np.argmax() bu listedeki en yüksek değerli indeksini bulur.
+    # 0 = Taş, 1 = Kağıt, 2 = Makas
+    tahmin_indeksi = np.argmax(tahmin_sonuclari[0])
+    tahmin_edilen_sinif = sinif_isimleri[tahmin_indeksi]
+    
+    # (sigmoid fonksiyonu uygulanmadığı için skor 'logits' formatındadır)
+    tahmin_skoru = tahmin_sonuclari[0][tahmin_indeksi]
+
+    print("\n========== TAHMİN SONUCU ==========")
+    print(f"Resim: {resim_yolu}")
+    print(f"Tahminim: {tahmin_edilen_sinif} (Skor: {tahmin_skoru:.2f})")
+    print("===================================")
+    print(f"(Ham skorlar: Tas={tahmin_sonuclari[0][0]:.2f}, Kagit={tahmin_sonuclari[0][1]:.2f}, Makas={tahmin_sonuclari[0][2]:.2f})")
+
+else:
+    print(f"HATA: '{resim_yolu}' adında bir dosya bulunamadı.")
+    print("Lütfen AI klasörüne tahmin için bir resim ekleyin ve adını 'test_resmi.jpg' yapın.")
