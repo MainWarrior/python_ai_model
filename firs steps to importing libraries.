@@ -1,0 +1,85 @@
+import tensorflow as tf
+import tensorflow_datasets as tfds
+import matplotlib.pyplot as plt
+
+# Gerekli Keras katmanlarını import edelim
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import Dense, GlobalAveragePooling2D, Input
+from tensorflow.keras.applications import MobileNetV2
+
+print("TensorFlow ve Keras kütüphaneleri yüklendi.")
+
+# === 1. VERİ SETİNİ YÜKLEME ===
+# 'rock_paper_scissors' -> Bu veri seti Google sunucularındadır ve garantilidir.
+# 'train' ve 'test' olarak ikiye ayrılmış.
+(train_ds, validation_ds), info = tfds.load(
+    'rock_paper_scissors',
+    split=['train', 'test'], # Eğitim ve Test setlerini al
+    with_info=True,
+    as_supervised=True, # Resim ve etiketi (img, label) tuple olarak verir
+)
+
+# Kaç sınıfımız olduğuna bakalım (Taş, Kağıt, Makas = 3)
+num_classes = info.features['label'].num_classes
+print(f"Sınıf sayısı: {num_classes} ({info.features['label'].names})")
+
+# === 2. VERİYİ HAZIRLAMA ===
+IMG_SIZE = 160 
+BATCH_SIZE = 32
+
+# Resimleri modele uygun hale getirecek bir fonksiyon
+preprocess_input = tf.keras.applications.mobilenet_v2.preprocess_input
+
+def format_image(image, label):
+    image = tf.cast(image, tf.float32)
+    image = tf.image.resize(image, (IMG_SIZE, IMG_SIZE))
+    image = preprocess_input(image) # MobileNetV2 için normalize et
+    return image, label
+
+# Fonksiyonu veri setlerimize uygulayalım
+train_batches = train_ds.map(format_image).shuffle(1000).batch(BATCH_SIZE).prefetch(buffer_size=tf.data.AUTOTUNE)
+validation_batches = validation_ds.map(format_image).batch(BATCH_SIZE).prefetch(buffer_size=tf.data.AUTOTUNE)
+
+print("Veri seti hazırlandı.")
+
+# === 3. MODELİ OLUŞTURMA ===
+# Temel Modeli Yükle (MobileNetV2)
+base_model = MobileNetV2(
+    weights='imagenet', 
+    include_top=False, 
+    input_shape=(IMG_SIZE, IMG_SIZE, 3)
+)
+base_model.trainable = False # Ağırlıkları dondur
+
+# Kendi modelimizi oluşturalım
+model = Sequential([
+    base_model,
+    GlobalAveragePooling2D(),
+    # ÇOK ÖNEMLİ: Sınıf sayımız 3 (taş, kağıt, makas) olduğu için Dense(3) kullanıyoruz.
+    Dense(num_classes) # Kedi/Köpek'te bu 1 veya 2 idi.
+])
+
+print("Model oluşturuldu.")
+
+# === 4. MODELİ DERLEME ===
+model.compile(
+    optimizer=tf.keras.optimizers.Adam(learning_rate=0.0001),
+    # ÇOK ÖNEMLİ: 2'den fazla sınıf (çoklu sınıf) olduğu için 'BinaryCrossentropy' 
+    # YERİNE 'SparseCategoricalCrossentropy' kullanıyoruz.
+    loss=tf.keras.losses.SparseCategoricalCrossentropy(from_logits=True),
+    metrics=['accuracy']
+)
+
+# === 5. MODELİ EĞİTME ===
+EPOCHS = 5
+history = model.fit(
+    train_batches,
+    epochs=EPOCHS,
+    validation_data=validation_batches
+)
+
+print("Model eğitimi tamamlandı!")
+
+# === 6. MODELİ KAYDETME ===
+model.save('tas_kagit_makas_modeli.h5')
+print("Model 'tas_kagit_makas_modeli.h5' olarak kaydedildi.")
