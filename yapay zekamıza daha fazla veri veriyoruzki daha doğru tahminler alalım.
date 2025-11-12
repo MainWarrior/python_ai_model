@@ -1,0 +1,109 @@
+import tensorflow as tf
+import tensorflow_datasets as tfds
+import matplotlib.pyplot as plt
+
+# Gerekli Keras katmanlarını import edelim
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import Dense, GlobalAveragePooling2D, Input
+from tensorflow.keras.applications import MobileNetV2
+from tensorflow.keras.layers import RandomFlip, RandomRotation, RandomZoom # <-- YENİ EKLENDİ
+
+print("TensorFlow ve Keras kütüphaneleri yüklendi.")
+
+# === 1. VERİ SETİNİ YÜKLEME ===
+(train_ds, validation_ds), info = tfds.load(
+    'rock_paper_scissors',
+    split=['train', 'test'],
+    with_info=True,
+    as_supervised=True, 
+)
+
+num_classes = info.features['label'].num_classes
+print(f"Sınıf sayısı: {num_classes} ({info.features['label'].names})")
+
+# === 2. VERİYİ HAZIRLAMA ===
+IMG_SIZE = 160 
+BATCH_SIZE = 32
+
+# YENİ EKLENDİ: Veri Çoğaltma (Data Augmentation) katmanları
+# Bu katmanlar, resimleri rastgele değiştirerek modeli zorlar
+data_augmentation = Sequential([
+    RandomFlip("horizontal"),  # Resimleri rastgele yatayda çevir
+    RandomRotation(0.2),       # Resimleri rastgele 20% oranında döndür
+    RandomZoom(0.2)            # Resimleri rastgele 20% oranında yakınlaştır
+], name="data_augmentation")
+
+# Resimleri modele uygun hale getirecek bir fonksiyon
+preprocess_input = tf.keras.applications.mobilenet_v2.preprocess_input
+
+def format_image(image, label):
+    image = tf.cast(image, tf.float32)
+    image = tf.image.resize(image, (IMG_SIZE, IMG_SIZE))
+    # 'preprocess_input' fonksiyonunu burada ÇAĞIRMIYORUZ, 
+    # modelin içine bir katman olarak ekleyeceğiz.
+    return image, label
+
+# Fonksiyonu veri setlerimize uygulayalım
+# AUTOTUNE, tensorflow'un en verimli ayarı bulmasını sağlar
+AUTOTUNE = tf.data.AUTOTUNE
+
+train_batches = (
+    train_ds
+    .map(format_image, num_parallel_calls=AUTOTUNE)
+    .cache() # Daha hızlı eğitim için veriyi belleğe al
+    .shuffle(1000)
+    .batch(BATCH_SIZE)
+    .map(lambda x, y: (data_augmentation(x, training=True), y), num_parallel_calls=AUTOTUNE) # <-- YENİ EKLENDİ (Sadece eğitim verisine uygulanır)
+    .prefetch(buffer_size=AUTOTUNE)
+)
+
+validation_batches = (
+    validation_ds
+    .map(format_image, num_parallel_calls=AUTOTUNE)
+    .batch(BATCH_SIZE)
+    .cache()
+    .prefetch(buffer_size=AUTOTUNE)
+)
+
+print("Veri seti hazırlandı. (Data Augmentation eklendi)")
+
+# === 3. MODELİ OLUŞTURMA ===
+base_model = MobileNetV2(
+    weights='imagenet', 
+    include_top=False, 
+    input_shape=(IMG_SIZE, IMG_SIZE, 3)
+)
+base_model.trainable = False # Ağırlıkları dondur
+
+# Modeli oluştururken Input katmanını ve preprocess katmanını ekleyelim
+inputs = Input(shape=(IMG_SIZE, IMG_SIZE, 3))
+x = preprocess_input(inputs) # <-- YENİ EKLENDİ (Normalleştirme artık modelin bir parçası)
+x = base_model(x, training=False)
+x = GlobalAveragePooling2D()(x)
+x = Dense(num_classes)(x) 
+model = tf.keras.Model(inputs, x) # Modeli birleştir
+
+print("Model oluşturuldu.")
+
+# === 4. MODELİ DERLEME ===
+model.compile(
+    optimizer=tf.keras.optimizers.Adam(learning_rate=0.0001),
+    loss=tf.keras.losses.SparseCategoricalCrossentropy(from_logits=True),
+    metrics=['accuracy']
+)
+
+# === 5. MODELİ EĞİTME ===
+# Augmentation eklediğimiz için modelin öğrenmesi zorlaşacak,
+# bu yüzden epoch sayısını biraz artırabiliriz.
+EPOCHS = 20 # 15'ten 20'ye çıkaralım
+history = model.fit(
+    train_batches,
+    epochs=EPOCHS,
+    validation_data=validation_batches
+)
+
+print("Model eğitimi tamamlandı!")
+
+# === 6. MODELİ KAYDETME ===
+model.save('tas_kagit_makas_modeli_v2.h5') # Yeni bir isim verelim
+print("Model 'tas_kagit_makas_modeli_v2.h5' olarak kaydedildi.")
