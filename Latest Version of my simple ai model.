@@ -1,0 +1,201 @@
+import tensorflow as tf
+import tensorflow_datasets as tfds
+import matplotlib.pyplot as plt
+
+# Gerekli Keras katmanlarını import edelim
+from tensorflow.keras.models import Sequential, Model
+from tensorflow.keras.layers import Dense, GlobalAveragePooling2D, Input
+from tensorflow.keras.applications import MobileNetV2
+from tensorflow.keras.layers import RandomFlip, RandomRotation, RandomZoom
+
+print("TensorFlow ve Keras kütüphaneleri yüklendi.")
+
+# === 1. VERİ SETİNİ YÜKLEME ===
+(train_ds, validation_ds), info = tfds.load(
+    'rock_paper_scissors',
+    split=['train', 'test'],
+    with_info=True,
+    as_supervised=True, 
+)
+num_classes = info.features['label'].num_classes
+print(f"Sınıf sayısı: {num_classes} ({info.features['label'].names})")
+
+# === 2. VERİYİ HAZIRLAMA ===
+IMG_SIZE = 160 
+BATCH_SIZE = 32
+
+data_augmentation = Sequential([
+    RandomFlip("horizontal"),
+    RandomRotation(0.2),
+    RandomZoom(0.2)
+], name="data_augmentation")
+
+preprocess_input = tf.keras.applications.mobilenet_v2.preprocess_input
+
+def format_image(image, label):
+    image = tf.cast(image, tf.float32)
+    image = tf.image.resize(image, (IMG_SIZE, IMG_SIZE))
+    return image, label
+
+AUTOTUNE = tf.data.AUTOTUNE
+
+train_batches = (
+    train_ds
+    .map(format_image, num_parallel_calls=AUTOTUNE)
+    .cache()
+    .shuffle(1000)
+    .batch(BATCH_SIZE)
+    .map(lambda x, y: (data_augmentation(x, training=True), y), num_parallel_calls=AUTOTUNE)
+    .map(lambda x, y: (preprocess_input(x), y), num_parallel_calls=AUTOTUNE)
+    .prefetch(buffer_size=AUTOTUNE)
+)
+
+validation_batches = (
+    validation_ds
+    .map(format_image, num_parallel_calls=AUTOTUNE)
+    .batch(BATCH_SIZE)
+    .cache()
+    .map(lambda x, y: (preprocess_input(x), y), num_parallel_calls=AUTOTUNE)
+    .prefetch(buffer_size=AUTOTUNE)
+)
+
+print("Veri seti hazırlandı.")
+
+# === 3. MODELİ OLUŞTURMA (FINE-TUNING İÇİN GÜNCELLENDİ) ===
+base_model = MobileNetV2(
+    weights='imagenet', 
+    include_top=False, 
+    input_shape=(IMG_SIZE, IMG_SIZE, 3)
+)
+
+# YENİ ADIM: Ana modeli "çöz"
+base_model.trainable = True
+
+# YENİ ADIM: Sadece üst katmanları eğitelim
+# MobileNetV2'nin 154 katmanı var. Sadece son 24'ünü yeniden eğiteceğiz.
+fine_tune_at = 130 
+
+# 'fine_tune_at'den önceki tüm katmanları dondur
+for layer in base_model.layers[:fine_tune_at]:
+    layer.trainable = False
+
+print(f"Fine-tuning için son {len(base_model.layers) - fine_tune_at} katman çözüldü.")
+
+# Modeli birleştirelim
+inputs = Input(shape=(IMG_SIZE, IMG_SIZE, 3))
+x = base_model(inputs, training=True) # training=True olarak değiştirdik
+x = GlobalAveragePooling2D()(x)
+x = Dense(num_classes)(x) 
+model = Model(inputs, x)
+
+print("Model (Fine-Tuning Versiyonu) oluşturuldu.")
+
+# === 4. MODELİ DERLEME (ÇOK ÖNEMLİ DEĞİŞİKLİK) ===
+# Fine-tuning yaparken, öğrenme oranı (learning_rate) ÇOK DÜŞÜK olmalıdır.
+# Yoksa 'base_model'in tüm bilgisi bozulur.
+model.compile(
+    optimizer=tf.keras.optimizers.Adam(learning_rate=1e-5), # 1e-4'ten 1e-5'e düşürüldü
+    loss=tf.keras.losses.SparseCategoricalCrossentropy(from_logits=True),
+    metrics=['accuracy']
+)
+
+# === 5. MODELİ EĞİTME ===
+EPOCHS = 20 # Aynı epoch sayısını koruyabiliriz
+history = model.fit(
+    train_batches,
+    epochs=EPOCHS,
+    validation_data=validation_batches
+)
+
+print("Model (Fine-Tuning) eğitimi tamamlandı!")
+
+# === 6. MODELİ KAYDETME ===
+model.save('tas_kagit_makas_modeli_v4.h5') # YENİ İSİM
+print("Model 'tas_kagit_makas_modeli_v4.h5' olarak kaydedildi.")
+
+guesser.py
+---------------------------------------------------------------------------------------------------------
+tahmin_et.py
+
+
+import tensorflow as tf
+import numpy as np
+import cv2 
+import os
+
+# GEREKLİ FONKSİYONU İMPORT ET
+preprocess_input = tf.keras.applications.mobilenet_v2.preprocess_input
+
+# YENİ Kaydedilmiş modeli yükle
+print("Model 'tas_kagit_makas_modeli_v4.h5' yükleniyor...")
+model = tf.keras.models.load_model('tas_kagit_makas_modeli_v4.h5', compile=False)
+print("Model başarıyla yüklendi.")
+
+sinif_isimleri = ['Tas', 'Kagit', 'Makas']
+IMG_SIZE = 160
+
+# Resim hazırlama fonksiyonu (Aynı)
+def resmi_hazirla(resim_yolu):
+    img = cv2.imread(resim_yolu)
+    img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+    img = cv2.resize(img, (IMG_SIZE, IMG_SIZE))
+    img_array = np.expand_dims(img, axis=0)
+    return preprocess_input(img_array)
+
+# Tahmin yapılacak resmin yolu
+resim_yolu = 'indir3.jfif' # Makas resminiz
+
+if os.path.exists(resim_yolu):
+    hazirlanmis_resim = resmi_hazirla(resim_yolu)
+    tahmin_sonuclari = model.predict(hazirlanmis_resim)
+    
+    tahmin_indeksi = np.argmax(tahmin_sonuclari[0])
+    tahmin_edilen_sinif = sinif_isimleri[tahmin_indeksi]
+    tahmin_skoru = tahmin_sonuclari[0][tahmin_indeksi]
+
+    print("\n========== TAHMİN SONUCU ==========")
+    print(f"Resim: {resim_yolu}")
+    print(f"Tahminim: {tahmin_edilen_sinif} (Skor: {tahmin_skoru:.2f})")
+    print("===================================")
+    print(f"(Ham skorlar: Tas={tahmin_sonuclari[0][0]:.2f}, Kagit={tahmin_sonuclari[0][1]:.2f}, Makas={tahmin_sonuclari[0][2]:.2f})")
+else:
+    print(f"HATA: '{resim_yolu}' adında bir dosya bulunamadı.")
+---------------------------------------------------------------------------------------------------------
+-Given İmage of The Paper-
+OUTPUT:
+
+Model başarıyla yüklendi.
+1/1 ━━━━━━━━━━━━━━━━━━━━ 1s 1s/step
+
+========== TAHMİN SONUCU ==========
+Resim: indir3.jfif
+Tahminim: Kagit (Skor: 0.53)
+===================================
+(Ham skorlar: Tas=-0.75, Kagit=0.53, Makas=-0.69)
+
+Result:
+-Finally my AI model has knowledge about rock paper and scissors game. 
+-It can observes the image and gives the true decision of given image among rock, paper, scissors elements. 
+
+What Possibly I do in the future of this model?
+
+- Model can be updated with the ability of game sense.
+- What I mean game sense is that AI model knows how to play rock, paper and scissors game fluently.
+- When we give an image among elements it gives us counter play of it. İt is like we give him paper. Model considers and gives us scissors.
+etc...
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
